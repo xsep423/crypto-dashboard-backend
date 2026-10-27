@@ -27,7 +27,17 @@ Crea un archivo `.env` en la raíz:
 ```env
 GROQ_API_KEY=tu_api_key_de_groq
 PORT=3001
+ALLOWED_ORIGINS=http://localhost:5173
 ```
+
+| Variable                  | Obligatoria | Descripción                                                                 |
+|---------------------------|-------------|-----------------------------------------------------------------------------|
+| `GROQ_API_KEY`            | Sí          | API key de Groq. El servidor no arranca sin ella                            |
+| `PORT`                    | No          | Puerto del servidor (por defecto `3001`)                                    |
+| `ALLOWED_ORIGINS`         | Recomendada | Orígenes permitidos por CORS, separados por coma. Si se omite, se acepta cualquiera |
+| `NODE_ENV`                | No          | Con `production` se desactiva `/api/news-test`                              |
+| `GROQ_MODEL`              | No          | Modelo de Groq (por defecto `openai/gpt-oss-20b`)                           |
+| `SENTIMENT_CACHE_MINUTES` | No          | Minutos que se reutiliza el análisis de sentimiento (por defecto `10`)      |
 
 ## Uso
 
@@ -45,7 +55,9 @@ El servidor queda disponible en `http://localhost:3001`.
 | GET    | `/api/health`     | Verifica que el servidor esté funcionando                          |
 | GET    | `/api/sentiment`  | Noticias recientes + análisis de sentimiento del mercado con IA    |
 | POST   | `/api/chat`       | Respuesta del asistente virtual a partir del historial de mensajes |
-| GET    | `/api/news-test`  | Endpoint de prueba que devuelve las noticias obtenidas del RSS     |
+| GET    | `/api/news-test`  | Noticias obtenidas del RSS (solo en desarrollo)                    |
+
+Límites por IP: 20 peticiones por minuto en `/api/chat` y 30 en `/api/sentiment`. Al superarlos se responde con `429`.
 
 ### `GET /api/sentiment`
 
@@ -56,9 +68,13 @@ El servidor queda disponible en `http://localhost:3001`.
   "resumen": "Explicación breve del sentimiento general.",
   "noticias": [
     { "title": "...", "source": "CoinDesk", "link": "https://...", "pubDate": "..." }
-  ]
+  ],
+  "actualizado": "2026-10-27T22:00:00.000Z",
+  "desactualizado": false
 }
 ```
+
+El resultado se guarda en caché durante `SENTIMENT_CACHE_MINUTES`. Si Groq o los feeds fallan, se devuelve el último análisis guardado con `"desactualizado": true`.
 
 ### `POST /api/chat`
 
@@ -78,16 +94,19 @@ Respuesta:
 { "respuesta": "Bitcoin es una criptomoneda descentralizada..." }
 ```
 
-El asistente responde en español, de forma breve, y no da consejos financieros.
+Solo se aceptan los roles `user` y `assistant`, con un máximo de 2000 caracteres por mensaje. Se envían a Groq los últimos 20 mensajes. El asistente responde en español, de forma breve, y no da consejos financieros.
 
 ## Estructura
 
 ```
-├── index.js                  # Servidor Express y definición de endpoints
+├── index.js                       # Servidor Express, CORS, límites y endpoints
+├── config.js                      # Lectura y validación de variables de entorno
 ├── services/
-│   ├── newsService.js        # Lectura de feeds RSS
-│   ├── sentimentService.js   # Análisis de sentimiento con Groq
-│   └── chatService.js        # Asistente conversacional con Groq
+│   ├── groqClient.js              # Cliente de Groq compartido
+│   ├── newsService.js             # Lectura de feeds RSS en paralelo
+│   ├── sentimentService.js        # Análisis de sentimiento con Groq
+│   ├── marketSentimentService.js  # Caché y respaldo del análisis de sentimiento
+│   └── chatService.js             # Validación y asistente conversacional con Groq
 ├── Procfile                  # Comando de arranque para Elastic Beanstalk
 └── package.json
 ```
@@ -100,4 +119,8 @@ El proyecto está configurado para AWS Elastic Beanstalk (Node.js en Amazon Linu
 eb deploy
 ```
 
-Recuerda configurar `GROQ_API_KEY` como variable de entorno en el entorno de Elastic Beanstalk.
+Configura las variables de entorno en Elastic Beanstalk antes de desplegar:
+
+```bash
+eb setenv GROQ_API_KEY=tu_api_key NODE_ENV=production ALLOWED_ORIGINS=https://url-de-tu-frontend
+```

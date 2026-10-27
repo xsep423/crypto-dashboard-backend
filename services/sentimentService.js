@@ -1,6 +1,7 @@
-import Groq from 'groq-sdk'
+import { groq } from './groqClient.js'
+import { config } from '../config.js'
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
+const SENTIMIENTOS_VALIDOS = ['positivo', 'negativo', 'neutral']
 
 /**
  * analyzeSentiment
@@ -34,7 +35,7 @@ con esta estructura exacta:
   let completion
   try {
     completion = await groq.chat.completions.create({
-      model: 'openai/gpt-oss-20b',
+      model: config.groqModel,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
       response_format: { type: 'json_object' },
@@ -45,14 +46,38 @@ con esta estructura exacta:
   }
 
   const responseText = completion.choices[0].message.content
-  console.log('📩 Respuesta cruda de Groq:', responseText)
 
   // Por si acaso el modelo envuelve el JSON en ```json ... ```
   const cleanJson = responseText.replace(/```json|```/g, '').trim()
 
+  let parsed
   try {
-    return JSON.parse(cleanJson)
+    parsed = JSON.parse(cleanJson)
   } catch (err) {
     throw new Error('Groq no devolvió un JSON válido: ' + responseText)
+  }
+
+  return normalizeAnalysis(parsed)
+}
+
+/**
+ * normalizeAnalysis
+ * Asegura que la respuesta del modelo tenga el formato que espera el frontend.
+ */
+function normalizeAnalysis(data) {
+  const sentimiento = String(data.sentimiento || '').toLowerCase().trim()
+  if (!SENTIMIENTOS_VALIDOS.includes(sentimiento)) {
+    throw new Error(`Sentimiento inválido devuelto por Groq: ${data.sentimiento}`)
+  }
+
+  const confianza = Number(data.confianza)
+  if (!Number.isFinite(confianza)) {
+    throw new Error(`Confianza inválida devuelta por Groq: ${data.confianza}`)
+  }
+
+  return {
+    sentimiento,
+    confianza: Math.round(Math.min(100, Math.max(0, confianza))),
+    resumen: String(data.resumen || '').trim(),
   }
 }
